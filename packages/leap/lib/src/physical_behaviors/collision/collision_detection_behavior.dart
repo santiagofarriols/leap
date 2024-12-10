@@ -4,7 +4,7 @@ import 'package:leap/leap.dart';
 import 'package:leap/src/physical_behaviors/physical_behaviors.dart';
 
 /// Contains all the logic for the collision detection system,
-/// updates the [velocity], [x], [y], and [collisionInfo] of the as needed.
+/// updates the [velocity], [x], [y], and [collisionInfo] as needed.
 class CollisionDetectionBehavior extends PhysicalBehavior {
   CollisionDetectionBehavior() : prevCollisionInfo = CollisionInfo();
 
@@ -31,9 +31,6 @@ class CollisionDetectionBehavior extends PhysicalBehavior {
       return;
     }
 
-    // NOTE: static entities will never run this behavior, so making entities
-    // static has important for performance
-
     prevCollisionInfo.copyFrom(collisionInfo);
     collisionInfo.reset();
 
@@ -42,21 +39,9 @@ class CollisionDetectionBehavior extends PhysicalBehavior {
   }
 
   void nonMapCollisionDetection(double dt) {
-    // This should be a small enough number of  objects that looping over all
-    // of them is efficient (we intentionally don't do this for ground tiles for
-    // that reason)
-
-    // TODO(kurtome): This should probably be changed to track "all collisions"
-    //  instead of just "other collisions".
-    //
-    //  Also, since this happens before VelocityBehavior has updated the
-    //  position (and without the special handling groundCollisionDetection
-    //  does) the collision detection may be one frame later than it should be.
-
     final nonMapCollidables = world.physicals.where(
       (other) =>
           other.collisionType == CollisionType.standard &&
-          // solid collisions are considered during ground detection
           !parent.isOtherSolid(other),
     );
     for (final other in nonMapCollidables) {
@@ -67,20 +52,13 @@ class CollisionDetectionBehavior extends PhysicalBehavior {
     }
   }
 
-  /// This handles the tilemap ground tiles collisions
+  /// Handles tilemap ground collisions
   void groundCollisionDetection(double dt) {
-    // The collision detection process work in a few steps:
-    //
-    // 1. Update x/y position as if there were no collisions (from velocity)
-    // 2. Find all objects that collide with this in its new position
-    // 3. Reset x/y position to original values
-    // 4. Inspect the collisions to determine how far the x/y values can be updated
-    // 5. Keep references to which collisions still apply, for game logic
-
     _proxyHitboxForHorizontalMovement(dt);
 
+    // Check horizontal collisions
     if (velocity.x > 0) {
-      // Moving right.
+      // Moving right
       _calculateTilemapHits((c) {
         return c.left <= _hitboxProxy.right &&
             c.right >= _hitboxProxy.right &&
@@ -92,7 +70,6 @@ class CollisionDetectionBehavior extends PhysicalBehavior {
         final firstRightHit = _tmpHits.first;
         if (firstRightHit.isSlopeFromLeft) {
           if (velocity.y >= 0) {
-            // Ignore slope underneath while moving upwards.
             collisionInfo.downCollision = firstRightHit;
           } else {
             collisionInfo.rightCollision = firstRightHit;
@@ -102,8 +79,9 @@ class CollisionDetectionBehavior extends PhysicalBehavior {
         }
       }
     }
+
     if (velocity.x < 0) {
-      // Moving left.
+      // Moving left
       _calculateTilemapHits((c) {
         return c.left <= _hitboxProxy.left &&
             c.right >= _hitboxProxy.left &&
@@ -114,8 +92,6 @@ class CollisionDetectionBehavior extends PhysicalBehavior {
         _tmpHits.sort((a, b) => b.right.compareTo(a.right));
         final firstLeftHit = _tmpHits.first;
         if (firstLeftHit.isSlopeFromRight) {
-          // Ignore slope underneath while moving upwards, should not collide
-          // on left.
           if (velocity.y >= 0) {
             collisionInfo.downCollision = firstLeftHit;
           } else {
@@ -129,14 +105,11 @@ class CollisionDetectionBehavior extends PhysicalBehavior {
 
     _proxyHitboxForVerticalMovement(dt);
 
-    if (velocity.y > 0 &&
-        // Already found down collision from a slope from horizontal movement.
-        !collisionInfo.down &&
-        !collisionInfo.onSlope) {
-      // Moving down.
+    // Check vertical collisions
+    if (velocity.y > 0 && !collisionInfo.down && !collisionInfo.onSlope) {
+      // Moving down
       _calculateTilemapHits((c) {
         return c.bottom >= bottom &&
-            // Bottom edge of this the below top of c.
             c.relativeTop(_hitboxProxy) <= _hitboxProxy.bottom;
       });
 
@@ -155,10 +128,9 @@ class CollisionDetectionBehavior extends PhysicalBehavior {
     }
 
     if (velocity.y < 0) {
-      // Moving up.
+      // Moving up
       _calculateTilemapHits((c) {
         return c.top <= top &&
-            // Bottom edge of this the below top of c.
             c.bottom >= _hitboxProxy.top &&
             !c.tags.contains('platform');
       });
@@ -170,8 +142,7 @@ class CollisionDetectionBehavior extends PhysicalBehavior {
       }
     }
 
-    // When walking downhill, objects should stick to the slope they are
-    // currently on instead of walking off of it.
+    // Handling walking downhill across slopes
     if (velocity.y > 0 &&
         !collisionInfo.down &&
         prevCollisionInfo.down &&
@@ -181,32 +152,46 @@ class CollisionDetectionBehavior extends PhysicalBehavior {
       if (velocity.x > 0) {
         // Walking down slope to the right.
         final nextSlopeYDelta = prevDown.rightTop == 0 ? 1 : 0;
-        final nextSlope = map.groundTiles[prevDown.gridX + 1]
-            [prevDown.gridY + nextSlopeYDelta];
-        if (prevDown.right >= left) {
-          collisionInfo.downCollision = prevDown;
-        } else if (nextSlope != null && nextSlope.isSlopeFromRight) {
-          collisionInfo.downCollision = nextSlope;
+
+        int nextX = prevDown.gridX + 1;
+        int nextY = prevDown.gridY + nextSlopeYDelta;
+
+        if (nextX >= 0 &&
+            nextX < map.groundTiles.length &&
+            nextY >= 0 &&
+            nextY < map.groundTiles[nextX].length) {
+          final nextSlope = map.groundTiles[nextX][nextY];
+          if (prevDown.right >= left) {
+            collisionInfo.downCollision = prevDown;
+          } else if (nextSlope != null && nextSlope.isSlopeFromRight) {
+            collisionInfo.downCollision = nextSlope;
+          }
         }
       } else if (velocity.x < 0) {
         // Walking down slope to the left.
         final nextSlopeYDelta = prevDown.leftTop == 0 ? 1 : 0;
-        final nextSlope = map.groundTiles[prevDown.gridX - 1]
-            [prevDown.gridY + nextSlopeYDelta];
-        if (prevDown.left <= right) {
-          collisionInfo.downCollision = prevDown;
-        } else if (nextSlope != null && nextSlope.isSlopeFromLeft) {
-          collisionInfo.downCollision = nextSlope;
+
+        int nextX = prevDown.gridX - 1;
+        int nextY = prevDown.gridY + nextSlopeYDelta;
+
+        if (nextX >= 0 &&
+            nextX < map.groundTiles.length &&
+            nextY >= 0 &&
+            nextY < map.groundTiles[nextX].length) {
+          final nextSlope = map.groundTiles[nextX][nextY];
+          if (prevDown.left <= right) {
+            collisionInfo.downCollision = prevDown;
+          } else if (nextSlope != null && nextSlope.isSlopeFromLeft) {
+            collisionInfo.downCollision = nextSlope;
+          }
         }
       }
     }
   }
 
   void _proxyHitboxForVerticalMovement(double dt) {
-    // Horizontal axis should be unchanged.
     _hitboxProxy.x = x;
     _hitboxProxy.width = width;
-
     if (velocity.y > 0) {
       _hitboxProxy.y = y;
     } else {
@@ -216,10 +201,8 @@ class CollisionDetectionBehavior extends PhysicalBehavior {
   }
 
   void _proxyHitboxForHorizontalMovement(double dt) {
-    // Vertical axis should be unchanged.
     _hitboxProxy.y = y;
     _hitboxProxy.height = height;
-
     if (velocity.x > 0) {
       _hitboxProxy.x = x;
     } else {
@@ -231,11 +214,9 @@ class CollisionDetectionBehavior extends PhysicalBehavior {
   void _calculateTilemapHits(bool Function(PhysicalEntity) filter) {
     _tmpHits.clear();
 
-    // Find the edges of the map.
     final maxXTile = map.groundTiles.length - 1;
     final maxYTile = map.groundTiles[0].length - 1;
 
-    // Find the edges of this physical component, in tile space.
     final leftTile = math.max(0, _hitboxProxy.gridLeft - 1);
     final rightTile = math.min(maxXTile, _hitboxProxy.gridRight + 1);
     final topTile = math.max(0, _hitboxProxy.gridTop - 1);
@@ -253,8 +234,6 @@ class CollisionDetectionBehavior extends PhysicalBehavior {
       }
     }
 
-    // TODO(kurtome): cache this somehow so it's only evaluated once per game
-    //  loop?
     final nonMapCollidables = world.physicals.where(
       (p) => p.collisionType == CollisionType.standard,
     );
@@ -269,8 +248,6 @@ class CollisionDetectionBehavior extends PhysicalBehavior {
 
   static bool intersectsOther(PhysicalEntity a, PhysicalEntity b) {
     final bHeight = b.bottom - b.relativeTop(a);
-    // This works by checking if the distance between the objects is less than
-    // their combined width (meaning they must overlap).
     return ((a.centerX - b.centerX).abs() * 2 < (a.width + b.width)) &&
         ((a.centerY - (b.bottom - (bHeight / 2))).abs() * 2 <
             (a.height + bHeight));
@@ -278,17 +255,12 @@ class CollisionDetectionBehavior extends PhysicalBehavior {
 
   bool intersects(PhysicalEntity b) {
     final bHeight = b.bottom - b.relativeTop(parent);
-    // This works by checking if the distance between the objects is less than
-    // their combined width (meaning they must overlap).
     return ((centerX - b.centerX).abs() * 2 < (width + b.width)) &&
-        ((centerY - (b.bottom - (bHeight / 2))).abs() * 2 < (height + bHeight));
+        ((centerY - (b.bottom - (bHeight / 2))).abs() * 2 <
+            (height + bHeight));
   }
 }
 
-/// Used by [CollisionDetectionBehavior] so it can manipulate width/height
-/// in order to calculate collision detection of a moving object without
-/// allowing it to pass through another object due to velocity or long
-/// time step.
 class _HitboxProxyComponent extends PhysicalEntity {
   _HitboxProxyComponent() : super(static: true);
 
